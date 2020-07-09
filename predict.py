@@ -296,7 +296,11 @@ def upload_file_s3(file_name, bucket=s3_bucket, object_name=None):
         object_name = file_name
 
     # Upload the file
-    s3_client = boto3.client('s3')
+    s3_client = boto3.client(
+        's3',
+        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+    )
     try:
         response = s3_client.upload_file(file_name, bucket, object_name)
     except ClientError as e:
@@ -324,7 +328,11 @@ def export_dataset_s3(ticker, dataset):
     data_filename = f"{ticker}.csv"
     csv_buffer = StringIO()
     dataset.to_csv(csv_buffer)
-    s3_resource = boto3.resource('s3')
+    s3_resource = boto3.resource(
+        's3',
+        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+    )
     # This came from stackoverflow answer above, so I'm not sure if we
     # can use `upload_file_s3`.
     s3_resource.Object(bucket, data_filename).put(Body=csv_buffer.getvalue())
@@ -337,7 +345,11 @@ def get_model_and_data_s3(ticker):
     otherwise create a new model and pull data from Alpaca, and 
     then upload the model and data to S3.
     '''
-    s3 = boto3.client('s3')
+    s3 = boto3.client(
+        's3',
+        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
+        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+    )
     # Get data so we know what dates to update model with.
     stock_key = f"{ticker}.csv"
     try:
