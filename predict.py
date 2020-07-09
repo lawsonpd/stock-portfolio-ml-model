@@ -11,9 +11,16 @@ from tensorflow.keras.layers import Dense, LSTM, Dropout
 
 from sklearn.preprocessing import MinMaxScaler
 
+import boto
+from botocore.exceptions import ClientError
+from io import StringIO
+
 # Set fit window globally so it doesn't have to be passed
 # around so much.
 fit_window = 2
+
+# S3 bucket name
+s3_bucket = 'stock-porfolio-ml-model'
 
 
 def get_api():
@@ -41,6 +48,8 @@ def window_data(stock_df, window, feature_col_num, target_col_num):
         X.append(X_comp)
         y.append(y_comp)
     return np.array(X), np.array(y).reshape(-1, 1)
+
+
 
 def get_data(ticker, days_back=1000, from_date=None):
     '''
@@ -86,7 +95,6 @@ def get_data(ticker, days_back=1000, from_date=None):
 
 
 
-# Construct model
 def create_model_and_dataset(ticker, fit_window=2):
     '''
     Get stock data, creates model, trains model and returns 
@@ -184,29 +192,20 @@ def build_model_keras(X_train, X_test, y_train, y_test, fit_window):
 
 
 
-def export_model(ticker, model, current_date=datetime.today()):
+def export_model(ticker, model):
     '''
-    Model should be exported iff it is up-to-date, i.e.
-    has been fitted to the most recent data. Therefore we
-    pass the date in to know whether a saved model is current.
-    
-    Note: currently not implemented to do anything useful for
-    our purposes.
-    
-    #TODO Figure out how to save the date for a model so that
-    we know what data to train it on when we update it.
-    
-    #UPDATE Collin suggested saving a dataset csv along with the
-    model and getting the last date from that.
+    Save model locally.
     '''
     # Save model
     model_json = model.to_json()
     model_path = Path(f"./Models/{ticker}_model.json")
     model.save(model_path)
-    
+
+
+
 def export_dataset(ticker, dataset):
     '''
-    Save dataset.
+    Save dataset locally.
     '''
     data_path = Path(f"./Data/{ticker}.csv")
     dataset.to_csv(data_path)
@@ -228,50 +227,171 @@ def get_model_and_data(ticker):
     # Get data so we know what dates to update model with.
     stock_path = Path(f"./Data/{ticker}.csv")
     try:
-        stock_data = pd.read_csv(stock_path) # DataFrame
+        stock_data = pd.read_csv(
+            stock_path, 
+            index_col=0, 
+            parse_dates=True, 
+            infer_datetime_format=True) # DataFrame
+
+        # stock_data.index = stock_data.index.date
     except FileNotFoundError:
         stock_data = get_data(ticker)
         # Export data, since none has been saved for this stock yet
         export_dataset(ticker, stock_data)
-    
+
     # Retrieve model
     model_path = Path(f"./Models/{ticker}_model.json")
     try:
         model = load_model(model_path)
     except:
         # If we don't have a model, create one
-        new_model, stock_data = create_model_and_dataset(ticker)
+        model, stock_data = create_model_and_dataset(ticker)
         # Export newly created model
-        export_model(ticker, new_model)
+        export_model(ticker, model)
         # Ok to return here, since we just created a dataset
         # with latest data (no need to do the check/update below)
-        return new_model, stock_data
-    
-    most_recent_train_date = stock_data.iloc[-1].name # Datetime
-    
-    today_date = datetime.today()
-    
+        return model, stock_data
+
+    most_recent_train_date = stock_data.iloc[-1].name.date()
+
+    today_date = datetime.today().date()
+
     if most_recent_train_date != today_date:
         # Calculate how many days we need to go back
         days_back = (today_date - most_recent_train_date).days
-        
+
         # Get data the model hasn't seen
         latest_data = get_data(ticker, days_back)
-        
+
         # Since there's new data not saved, add to df
         stock_data = stock_data.append(latest_data)
-        
+
         # Export df with latest data
         export_dataset(ticker, stock_data)
-        
+
         # Update model
-        updated_model = update_model(model, latest_data)
-        
+        model = update_model(model, latest_data)
+
         # Export model
-        export_model(ticker, updated_model)
+        export_model(ticker, model)
 
     # Caller is expecting model and data back
-    return updated_model, stock_data
+    return model, stock_data
+
+
+
+def upload_file_s3(file_name, bucket=s3_bucket, object_name=None):
+    """ NOTE: Got this from https://boto3.amazonaws.com/v1/documentation/api/latest/guide/s3-uploading-files.html
+
+    Upload a file to an S3 bucket
+    
+    :param file_name: File to upload
+    :param bucket: Bucket to upload to
+    :param object_name: S3 object name. If not specified then file_name is used
+    :return: True if file was uploaded, else False
+    """
+
+    # If S3 object_name was not specified, use file_name
+    if object_name is None:
+        object_name = file_name
+
+    # Upload the file
+    s3_client = boto3.client('s3')
+    try:
+        response = s3_client.upload_file(file_name, bucket, object_name)
+    except ClientError as e:
+        logging.error(e)
+        return False
+    return True
+
+
+
+def export_model_s3(ticker, model):
+    '''
+    Save model to AWS S3 bucket.
+    '''
+    # Save model
+    model_json = model.to_json()
+    model_filename = f"{ticker}_model.json"
+    upload_file_s3(model_filename)
+    
+def export_dataset_s3(ticker, dataset):
+    '''
+    Save dataset to AWS S3 bucket.
+    
+    https://stackoverflow.com/questions/38154040/save-dataframe-to-csv-directly-to-s3-python
+    '''
+    data_filename = f"{ticker}.csv"
+    csv_buffer = StringIO()
+    dataset.to_csv(csv_buffer)
+    s3_resource = boto3.resource('s3')
+    # This came from stackoverflow answer above, so I'm not sure if we
+    # can use `upload_file_s3`.
+    s3_resource.Object(bucket, data_filename).put(Body=csv_buffer.getvalue())
+    
+    
+    
+def get_model_and_data_s3(ticker):
+    '''
+    Get saved model and data from AWS S3 bucket if they exist, 
+    otherwise create a new model and pull data from Alpaca, and 
+    then upload the model and data to S3.
+    '''
+    s3 = boto3.client('s3')
+    # Get data so we know what dates to update model with.
+    stock_key = f"{ticker}.csv"
+    try:
+        stock_datafile = s3.download_file(s3_bucket, None, stock_key)
+        stock_data = pd.read_csv(
+            stock_datafile, 
+            index_col=0, 
+            parse_dates=True, 
+            infer_datetime_format=True) # DataFrame
+
+        # stock_data.index = stock_data.index.date
+    except FileNotFoundError:
+        stock_data = get_data(ticker)
+        # Export data, since none has been saved for this stock yet
+        export_dataset_s3(ticker, stock_data)
+
+    # Retrieve model
+    model_key = f"{ticker}_model.json"
+    try:
+        model = s3.download_file(s3_bucket, None, model_key)
+    except:
+        # If we don't have a model, create one
+        model, stock_data = create_model_and_dataset(ticker)
+        # Export newly created model
+        export_model_s3(ticker, model)
+        # Ok to return here, since we just created a dataset
+        # with latest data (no need to do the check/update below)
+        return model, stock_data
+
+    most_recent_train_date = stock_data.iloc[-1].name.date()
+
+    today_date = datetime.today().date()
+
+    if most_recent_train_date != today_date:
+        # Calculate how many days we need to go back
+        days_back = (today_date - most_recent_train_date).days
+
+        # Get data the model hasn't seen
+        latest_data = get_data(ticker, days_back)
+
+        # Since there's new data not saved, add to df
+        stock_data = stock_data.append(latest_data)
+
+        # Export df with latest data
+        export_dataset(ticker, stock_data)
+
+        # Update model
+        model = update_model(model, latest_data)
+
+        # Export model
+        export_model(ticker, model)
+
+    # Caller is expecting model and data back
+    return model, stock_data
 
 
 
@@ -429,14 +549,16 @@ def predicted_portfolio_metrics(model, stock_data, window=30, fit_window=2):
     # be transparent for user)
     df['return'] = df['close'].pct_change()
 
-    # Calc redicted return
+    # Calc predicted return
     pred_return = df.iloc[-1]['return'] * 100
+    pred_return = "{0:.3f}".format(pred_return)
     
     # Calc sharpe ratio
     sharpe_ratio = (df['return'].mean() * 252) / (df['return'].std() * np.sqrt(252))
+    sharpe_ratio = "{0:.3f}".format(sharpe_ratio)
     
     # Get predicted date
-    predicted_date = df.iloc[-1].name
+    predicted_date = pred_to_return.name
     
     return pred_return, sharpe_ratio, predicted_date
 
@@ -486,8 +608,9 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Get tickers from parsed args
-    ticker_strs = args.portfolio
-    tickers = [tick.strip() for tick in ticker_strs.split(',')]
+    # ticker_strs = args.portfolio
+    # tickers = [tick.strip() for tick in ticker_strs.split(',')]
+    tickers = args.portfolio
 
     # Main/top entry to ML part of the module
     user_portfolio_metrics = get_portfolio_predictions(tickers)
