@@ -11,7 +11,7 @@ from tensorflow.keras.layers import Dense, LSTM, Dropout
 
 from sklearn.preprocessing import MinMaxScaler
 
-import boto
+import boto3
 from botocore.exceptions import ClientError
 from io import StringIO
 
