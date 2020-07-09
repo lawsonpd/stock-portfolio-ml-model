@@ -394,13 +394,13 @@ def get_model_and_data_s3(ticker):
         stock_data = stock_data.append(latest_data)
 
         # Export df with latest data
-        export_dataset(ticker, stock_data)
+        export_dataset_s3(ticker, stock_data)
 
         # Update model
         model = update_model(model, latest_data)
 
         # Export model
-        export_model(ticker, model)
+        export_model_s3(ticker, model)
 
     # Caller is expecting model and data back
     return model, stock_data
@@ -588,7 +588,7 @@ def get_portfolio_predictions(tickers, window=30):
         # and update them if they exist.
         ### Testing saved models
         # model, data = create_model_and_dataset(ticker)
-        model, data = get_model_and_data(ticker)
+        model, data = get_model_and_data_s3(ticker)
         print(model)
         
         pred_return, sharpe_ratio, predicted_date = predicted_portfolio_metrics(model=model, stock_data=data, window=window)
