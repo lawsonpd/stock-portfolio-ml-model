@@ -13,6 +13,12 @@ from sklearn.preprocessing import MinMaxScaler
 
 import boto3
 from botocore.exceptions import ClientError
+
+# https://boto.cloudhackers.com/en/latest/s3_tut.html
+from boto.s3.connection import S3Connection
+conn = S3Connection(os.environ['AWS_ACCESS_KEY_ID'], os.environ['AWS_SECRET_ACCESS_KEY'])
+conn = S3Connection()
+
 from io import StringIO
 
 # Set fit window globally so it doesn't have to be passed
@@ -298,8 +304,8 @@ def upload_file_s3(file_name, bucket=s3_bucket, object_name=None):
     # Upload the file
     s3_client = boto3.client(
         's3',
-        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY']
     )
     try:
         response = s3_client.upload_file(file_name, bucket, object_name)
@@ -330,8 +336,8 @@ def export_dataset_s3(ticker, dataset):
     dataset.to_csv(csv_buffer)
     s3_resource = boto3.resource(
         's3',
-        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY']
     )
     # This came from stackoverflow answer above, so I'm not sure if we
     # can use `upload_file_s3`.
@@ -347,8 +353,8 @@ def get_model_and_data_s3(ticker):
     '''
     s3 = boto3.client(
         's3',
-        aws_access_key_id=os.getenv('AWS_ACCESS_KEY_ID'),
-        aws_secret_access_key=os.getenv('AWS_SECRET_ACCESS_KEY')
+        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
+        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY']
     )
     # Get data so we know what dates to update model with.
     stock_key = f"{ticker}.csv"
