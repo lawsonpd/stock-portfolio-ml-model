@@ -15,9 +15,9 @@ import boto3
 from botocore.exceptions import ClientError
 
 # https://boto.cloudhackers.com/en/latest/s3_tut.html
-from boto.s3.connection import S3Connection
-conn = S3Connection(os.environ['AWS_ACCESS_KEY_ID'], os.environ['AWS_SECRET_ACCESS_KEY'])
-conn = S3Connection()
+# from boto.s3.connection import S3Connection
+# conn = S3Connection(os.environ['AWS_ACCESS_KEY_ID'], os.environ['AWS_SECRET_ACCESS_KEY'])
+# conn = S3Connection()
 
 from io import StringIO
 
@@ -29,17 +29,29 @@ fit_window = 2
 s3_bucket = 'stock-porfolio-ml-model'
 
 
-def get_api():
+def get_trade_api(alpaca_api_key, alpaca_secret_key):
     '''
     NOTE: Need to make sure this works with env variables on AWS.
     '''
-    # Set Alpaca API key and secret
-    alpaca_api_key = os.getenv("ALPACA_API_KEY_ID")
-    alpaca_secret_key = os.getenv("ALPACA_SECRET_KEY")
 
-    api = tradeapi.REST(alpaca_api_key, alpaca_secret_key, api_version='v2')
+    trade_api = tradeapi.REST(alpaca_api_key, alpaca_secret_key, api_version='v2')
     
-    return api
+    return trade_api
+
+
+
+def get_s3_conn(aws_access_key_id, aws_secret_access_key):
+    '''
+    Connect to S3.
+    '''
+
+    s3_client = boto3.client(
+        's3',
+        aws_access_key_id=aws_access_key_id,
+        aws_secret_access_key=aws_secret_access_key
+    )
+
+    return s3_client
 
 
 
@@ -57,7 +69,7 @@ def window_data(stock_df, window, feature_col_num, target_col_num):
 
 
 
-def get_data(ticker, days_back=1000, from_date=None):
+def get_data(ticker, trade_api, days_back=1000, from_date=None):
     '''
     Get data from Alpaca for training model.
     
@@ -69,6 +81,7 @@ def get_data(ticker, days_back=1000, from_date=None):
     `from_date` was going to be the farthest date back we
     want to get data for, but instead for now I'm using `days_back`.
     '''
+
     # Set timeframe to '1D'
     timeframe = '1D'
 
@@ -82,8 +95,7 @@ def get_data(ticker, days_back=1000, from_date=None):
         days_back += 1
 
     # Get stock data
-    api = get_api()
-    stock_df = api.get_barset(
+    stock_df = trade_api.get_barset(
         ticker,
         timeframe,
         # Adding a day because it starts at today
@@ -101,7 +113,7 @@ def get_data(ticker, days_back=1000, from_date=None):
 
 
 
-def create_model_and_dataset(ticker, fit_window=2):
+def create_model_and_dataset(ticker, trade_api, fit_window=2):
     '''
     Get stock data, creates model, trains model and returns 
     model for prediction.
@@ -111,7 +123,7 @@ def create_model_and_dataset(ticker, fit_window=2):
     data along with the model.
     '''
     # Get stock data
-    stock_df = get_data(ticker)
+    stock_df = get_data(ticker, trade_api)
     
     # Create feature & target
     # `fit_window` is how many priors we use
@@ -218,7 +230,7 @@ def export_dataset(ticker, dataset):
 
 
 
-def get_model_and_data(ticker):
+def get_model_and_data(ticker, trade_api):
     '''
     Basically just a wrapper around `load_model`. Until we
     figure out how to export a model with a date, this
@@ -241,7 +253,7 @@ def get_model_and_data(ticker):
 
         # stock_data.index = stock_data.index.date
     except FileNotFoundError:
-        stock_data = get_data(ticker)
+        stock_data = get_data(ticker, trade_api)
         # Export data, since none has been saved for this stock yet
         export_dataset(ticker, stock_data)
 
@@ -251,7 +263,7 @@ def get_model_and_data(ticker):
         model = load_model(model_path)
     except:
         # If we don't have a model, create one
-        model, stock_data = create_model_and_dataset(ticker)
+        model, stock_data = create_model_and_dataset(ticker, trade_api)
         # Export newly created model
         export_model(ticker, model)
         # Ok to return here, since we just created a dataset
@@ -267,7 +279,7 @@ def get_model_and_data(ticker):
         days_back = (today_date - most_recent_train_date).days
 
         # Get data the model hasn't seen
-        latest_data = get_data(ticker, days_back)
+        latest_data = get_data(ticker, trade_api, days_back)
 
         # Since there's new data not saved, add to df
         stock_data = stock_data.append(latest_data)
@@ -286,7 +298,7 @@ def get_model_and_data(ticker):
 
 
 
-def upload_file_s3(file_name, bucket=s3_bucket, object_name=None):
+def upload_file_s3(file_name, s3_conn, object_name=None):
     """ NOTE: Got this from https://boto3.amazonaws.com/v1/documentation/api/latest/guide/s3-uploading-files.html
 
     Upload a file to an S3 bucket
@@ -302,13 +314,8 @@ def upload_file_s3(file_name, bucket=s3_bucket, object_name=None):
         object_name = file_name
 
     # Upload the file
-    s3_client = boto3.client(
-        's3',
-        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY']
-    )
     try:
-        response = s3_client.upload_file(file_name, bucket, object_name)
+        response = s3_conn.upload_file(file_name, s3_bucket, object_name)
     except ClientError as e:
         logging.error(e)
         return False
@@ -316,50 +323,45 @@ def upload_file_s3(file_name, bucket=s3_bucket, object_name=None):
 
 
 
-def export_model_s3(ticker, model):
+def export_model_s3(ticker, model, s3_conn):
     '''
     Save model to AWS S3 bucket.
     '''
     # Save model
     model_json = model.to_json()
     model_filename = f"{ticker}_model.json"
-    upload_file_s3(model_filename)
+    upload_file_s3(model_filename, s3_conn)
     
-def export_dataset_s3(ticker, dataset):
+def export_dataset_s3(ticker, dataset, s3_conn):
     '''
     Save dataset to AWS S3 bucket.
-    
+
     https://stackoverflow.com/questions/38154040/save-dataframe-to-csv-directly-to-s3-python
     '''
     data_filename = f"{ticker}.csv"
     csv_buffer = StringIO()
     dataset.to_csv(csv_buffer)
-    s3_resource = boto3.resource(
-        's3',
-        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY']
-    )
+
     # This came from stackoverflow answer above, so I'm not sure if we
     # can use `upload_file_s3`.
-    s3_resource.Object(bucket, data_filename).put(Body=csv_buffer.getvalue())
+    # s3_resource.Object(bucket, data_filename).put(Body=csv_buffer.getvalue())
+
+    # https://stackoverflow.com/questions/40336918/how-to-write-a-file-or-data-to-an-s3-object-using-boto3#40336919
+    s3_conn.put_object(Body=csv_buffer, Bucket=s3_bucket, Key=data_filename)
     
     
     
-def get_model_and_data_s3(ticker):
+def get_model_and_data_s3(ticker, trade_api, s3_conn):
     '''
     Get saved model and data from AWS S3 bucket if they exist, 
     otherwise create a new model and pull data from Alpaca, and 
     then upload the model and data to S3.
     '''
-    s3 = boto3.client(
-        's3',
-        aws_access_key_id=os.environ['AWS_ACCESS_KEY_ID'],
-        aws_secret_access_key=os.environ['AWS_SECRET_ACCESS_KEY']
-    )
+
     # Get data so we know what dates to update model with.
     stock_key = f"{ticker}.csv"
     try:
-        stock_datafile = s3.download_file(s3_bucket, None, stock_key)
+        stock_datafile = s3_conn.download_file(s3_bucket, None, stock_key)
         stock_data = pd.read_csv(
             stock_datafile, 
             index_col=0, 
@@ -368,19 +370,19 @@ def get_model_and_data_s3(ticker):
 
         # stock_data.index = stock_data.index.date
     except FileNotFoundError:
-        stock_data = get_data(ticker)
+        stock_data = get_data(ticker, trade_api)
         # Export data, since none has been saved for this stock yet
         export_dataset_s3(ticker, stock_data)
 
     # Retrieve model
     model_key = f"{ticker}_model.json"
     try:
-        model = s3.download_file(s3_bucket, None, model_key)
+        model = s3_conn.download_file(s3_bucket, None, model_key)
     except:
         # If we don't have a model, create one
-        model, stock_data = create_model_and_dataset(ticker)
+        model, stock_data = create_model_and_dataset(ticker, trade_api)
         # Export newly created model
-        export_model_s3(ticker, model)
+        export_model_s3(ticker, model, s3_conn)
         # Ok to return here, since we just created a dataset
         # with latest data (no need to do the check/update below)
         return model, stock_data
@@ -394,19 +396,19 @@ def get_model_and_data_s3(ticker):
         days_back = (today_date - most_recent_train_date).days
 
         # Get data the model hasn't seen
-        latest_data = get_data(ticker, days_back)
+        latest_data = get_data(ticker, trade_api, days_back)
 
         # Since there's new data not saved, add to df
         stock_data = stock_data.append(latest_data)
 
         # Export df with latest data
-        export_dataset_s3(ticker, stock_data)
+        export_dataset_s3(ticker, stock_data, s3_conn)
 
         # Update model
         model = update_model(model, latest_data)
 
         # Export model
-        export_model_s3(ticker, model)
+        export_model_s3(ticker, model, s3_conn)
 
     # Caller is expecting model and data back
     return model, stock_data
@@ -582,7 +584,7 @@ def predicted_portfolio_metrics(model, stock_data, window=30, fit_window=2):
 
 
 
-def get_portfolio_predictions(tickers, window=30):
+def get_portfolio_predictions(tickers, trade_api, s3_conn, window=30):
     '''
     *** Entry point into module.
     '''
@@ -594,7 +596,7 @@ def get_portfolio_predictions(tickers, window=30):
         # and update them if they exist.
         ### Testing saved models
         # model, data = create_model_and_dataset(ticker)
-        model, data = get_model_and_data_s3(ticker)
+        model, data = get_model_and_data_s3(ticker, trade_api, s3_conn)
         print(model)
         
         pred_return, sharpe_ratio, predicted_date = predicted_portfolio_metrics(model=model, stock_data=data, window=window)
