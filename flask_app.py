@@ -14,8 +14,6 @@ app = Flask(__name__)
 @app.route('/predict', methods=['POST'])
 
 def predict():
-    print(aws_access_key_id)
-
     req = request.get_json(force=True)
 
     tickers = req['tickers']
@@ -34,4 +32,3 @@ def predict():
 
 if __name__ == '__main__':
     app.run(port = 5000, debug=True)
-
