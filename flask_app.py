@@ -1,5 +1,6 @@
 from flask import Flask, jsonify, request
 from predict import get_portfolio_predictions, get_trade_api, get_s3_conn
+import os
 
 alpaca_api_key_id = os.getenv('ALPACA_API_KEY_ID')
 alpaca_secret_key = os.getenv('ALPACA_SECRET_KEY')
