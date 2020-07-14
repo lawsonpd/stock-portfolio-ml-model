@@ -14,6 +14,8 @@ from sklearn.preprocessing import MinMaxScaler
 import boto3
 from botocore.exceptions import ClientError
 
+import json
+
 # https://boto.cloudhackers.com/en/latest/s3_tut.html
 # from boto.s3.connection import S3Connection
 # conn = S3Connection(os.environ['AWS_ACCESS_KEY_ID'], os.environ['AWS_SECRET_ACCESS_KEY'])
@@ -330,7 +332,14 @@ def export_model_s3(ticker, model, s3_conn):
     # Save model
     model_json = model.to_json()
     model_filename = f"{ticker}_model.json"
-    upload_file_s3(model_filename, s3_conn)
+    #upload_file_s3(model_filename, s3_conn)
+    upload_model_s3(model_json, model_filename, s3_conn)
+
+def upload_model_s3(model, filename, s3_conn):
+    s3_conn.put_object(Body=(
+        bytes(json.dumps(model).encode('UTF-8'))
+    ), Bucket=s3_bucket, Key=filename)
+
     
 def export_dataset_s3(ticker, dataset, s3_conn):
     '''
@@ -341,13 +350,13 @@ def export_dataset_s3(ticker, dataset, s3_conn):
     data_filename = f"{ticker}.csv"
     csv_buffer = StringIO()
     dataset.to_csv(csv_buffer)
-
+    print(csv_buffer.getvalue(), type(csv_buffer.getvalue()))
     # This came from stackoverflow answer above, so I'm not sure if we
     # can use `upload_file_s3`.
     # s3_resource.Object(bucket, data_filename).put(Body=csv_buffer.getvalue())
 
     # https://stackoverflow.com/questions/40336918/how-to-write-a-file-or-data-to-an-s3-object-using-boto3#40336919
-    s3_conn.put_object(Body=csv_buffer, Bucket=s3_bucket, Key=data_filename)
+    s3_conn.put_object(Body=csv_buffer.getvalue(), Bucket=s3_bucket, Key=data_filename)
     
     
     
@@ -357,11 +366,12 @@ def get_model_and_data_s3(ticker, trade_api, s3_conn):
     otherwise create a new model and pull data from Alpaca, and 
     then upload the model and data to S3.
     '''
-
     # Get data so we know what dates to update model with.
     stock_key = f"{ticker}.csv"
+    print(stock_key)
     try:
         stock_datafile = s3_conn.download_file(s3_bucket, None, stock_key)
+        #stock_datafile = s3_conn.get_object(Bucket=s3_bucket, Key=stock_key)
         stock_data = pd.read_csv(
             stock_datafile, 
             index_col=0, 
@@ -369,11 +379,11 @@ def get_model_and_data_s3(ticker, trade_api, s3_conn):
             infer_datetime_format=True) # DataFrame
 
         # stock_data.index = stock_data.index.date
-    except FileNotFoundError:
+    except:
         stock_data = get_data(ticker, trade_api)
         # Export data, since none has been saved for this stock yet
-        export_dataset_s3(ticker, stock_data)
-
+        export_dataset_s3(ticker, stock_data, s3_conn)
+    
     # Retrieve model
     model_key = f"{ticker}_model.json"
     try:
