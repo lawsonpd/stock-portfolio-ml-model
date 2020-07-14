@@ -35,7 +35,9 @@ def predict():
 def test_vars():
     vars = {
         'alpaca key id': alpaca_api_key_id, 
-        'aws key id': aws_access_key_id
+        'alpaca': alpaca_secret_key,
+        'aws key id': aws_access_key_id,
+        'aws': aws_secret_access_key
     }
     
     vars_json = json.dumps(vars)
