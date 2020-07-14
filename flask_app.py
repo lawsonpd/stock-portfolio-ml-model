@@ -31,7 +31,7 @@ def predict():
 
 
 
-@app.route('/vars', methods=['GET'])
+@app.route('/vars-7567875983945734', methods=['GET'])
 def test_vars():
     vars = {
         'alpaca key id': alpaca_api_key_id, 
