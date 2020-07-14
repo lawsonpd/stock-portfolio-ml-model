@@ -2,6 +2,8 @@ from flask import Flask, jsonify, request
 from predict import get_portfolio_predictions, get_trade_api, get_s3_conn
 import os
 
+import json
+
 alpaca_api_key_id = os.getenv('ALPACA_API_KEY_ID')
 alpaca_secret_key = os.getenv('ALPACA_SECRET_KEY')
 aws_access_key_id = os.getenv('AWS_ACCESS_KEY_ID')
@@ -12,7 +14,6 @@ app = Flask(__name__)
 
 # Routes
 @app.route('/predict', methods=['POST'])
-
 def predict():
     req = request.get_json(force=True)
 
@@ -27,6 +28,19 @@ def predict():
     output = jsonify(results=user_portfolio_metrics)
 
     return output
+
+
+
+@app.route('/vars', methods=['GET'])
+def test_vars():
+    vars = {
+        'alpaca key id': alpaca_api_key_id, 
+        'aws key id': aws_access_key_id
+    }
+    
+    vars_json = json.dumps(vars)
+    
+    return vars_json
 
 
 
