@@ -31,20 +31,5 @@ def predict():
 
 
 
-@app.route('/vars-7567875983945734', methods=['GET'])
-def test_vars():
-    vars = {
-        'alpaca key id': alpaca_api_key_id, 
-        'alpaca': alpaca_secret_key,
-        'aws key id': aws_access_key_id,
-        'aws': aws_secret_access_key
-    }
-    
-    vars_json = json.dumps(vars)
-    
-    return vars_json
-
-
-
 if __name__ == '__main__':
     app.run(port = 5000, debug=True)
