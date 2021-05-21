@@ -1,7 +1,7 @@
 numpy==1.18.1
 pandas==0.24.2
 alpaca-trade-api==0.46
-tensorflow==1.15.2
+tensorflow==2.5.0
 scikit-learn==0.22.1
 requests==2.23.0
 Flask==1.1.1
