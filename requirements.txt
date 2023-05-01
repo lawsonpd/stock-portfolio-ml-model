@@ -4,7 +4,7 @@ alpaca-trade-api==0.46
 tensorflow==1.15.2
 scikit-learn==0.22.1
 requests==2.23.0
-Flask==1.1.1
+Flask==2.3.2
 gunicorn==20.0.4
 boto==2.49.0
 botocore==1.17.18
